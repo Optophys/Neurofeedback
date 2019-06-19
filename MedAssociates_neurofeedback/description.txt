@@ -1,0 +1,7 @@
+Behavioral part of the Neurofeedback experiment
+===============================================
+The rat will get a reward when a "beta event" is detected,
+and punishment (white noise) when an artifact detected.
+
+File Neurofeedback.MPC can be compiled and used by MedAssociate's MED-PC IV software.
+File Neurofeedback.MTP can be used to extract data using the MED-PC to Excel software.

@@ -1,0 +1,4 @@
+The script Neurofeedback_beta.m accompanies the neurofeedback TDT circuit, for online calculation 
+of the percentiles and presentation of data.
+The RZ2 is controlled directly from the script. For assistance with controlling TDT with 
+matlab, contact TDT support. 

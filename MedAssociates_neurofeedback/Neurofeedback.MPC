@@ -1,0 +1,275 @@
+\ Behavioral part of the Neurofeedback experiment
+\ ===============================================
+\ The rat will get a reward when a "beta event" is detected,
+\ and punishment (white noise) when an artifact detected.
+\
+\ Version 1.0, 20180615
+
+\ Inputs
+^WrongHold = 2 \artifact
+^HoldLever = 3 \beta event
+
+\ Outputs
+^SessionStartTDT  = 10  \ used for synchronization
+^House            = 1   \ house light
+^Pump             = 8
+
+\ Digital outputs to TDT
+^PumpToTDT         = 9
+^EventToTDT        = 10
+^ClickerToTDT      = 12
+^DrinkingTimeToTDT = 13
+^TrialOnToTDT      = 14
+^TimeoutToTDT      = 15
+
+\ Variables:
+\ A     = Total rewards
+\ P     = Tone duration
+\ S     = session duration
+\ k(1)  = counter for time stamp of rewards
+\ k(2)  = counter for time stamp of trial begin
+\ k(3)  = counter for time stamp of artifacts
+\ W     = time stamp array of trial begin
+\ X     = time stamp array of punishments
+\ Y     = time stamp array of rewards
+\ z(1)  = counter for beta event safety switch
+\ z(2)  = counter for artifact safety switch
+\ z(6)  = reward size
+\ z(7)  = total water
+\ z(9)  = counter of correct trials
+\ z(10) = counter of punishments
+\ Z(11) = safety switch duration
+\ z(22) = timeout duration
+\ z(23) = drinking time after reward
+\ z(24) = delay between event and reward
+\ z(29) = reward clicker duration (0=off)
+\ z(31) = a counter for the clean time
+
+DIM K = 50
+DIM W = 4000
+DIM X = 4000
+DIM Y = 4000
+DIM Z = 50
+
+\Z pulses:
+\ Z1: beta event
+\ Z2: artifact
+\ Z3: artifact plus clean time are over
+\ Z4: beginning of trial
+\ Z12: end of clicker time (for sending to TDT)
+\ Z14: reward given
+
+\*******************************************************************************************
+VAR_ALIAS Reward size (*10ms) = z(6)
+VAR_ALIAS safety switch duration (*10ms) = z(11)
+VAR_ALIAS Time-out duration (*10ms) = z(22)
+VAR_ALIAS Drinking duration (*10ms) = z(23)
+VAR_ALIAS delay between event and reward (*10ms) = z(24)
+VAR_ALIAS Reward clicker duration in ms (0 = OFF) = z(29)
+
+S.S.1,
+S1,
+#START:    ~InitANL926;~;
+       ~SetFreq(MG, BOX, 12000);~;
+       ~SetAmp(MG, BOX, 90);~;
+       ~SetRF(MG, BOX, 10);~;
+       ~SetDur(MG, BOX, 500);~;
+
+       SET S = 120, z(6)=100,  Z(9)=1, Z(11)=6,
+           z(22) = 100, z(23)=50, z(29)=1000;
+       ON ^House, ^SessionStartTDT --->S10
+
+S10,
+0.1":  OFF ^SessionStartTDT; ---> S11
+
+S11,
+2.3":  IF T >= 1500 [@BaseLineReady, @KeepSpoiling]
+    @BaseLineReady: ON ^TrialOnToTDT ---> S2
+    @KeepSpoiling: ON ^Pump, ^PumpToTDT --->  S12
+
+S12,
+0.7": OFF ^Pump, ^PumpToTDT ---> S11
+
+S2,
+0.001": Z4; ON ^TrialOnToTDT  ---> S3
+
+S3,
+#Z1 :  ADD z(9); OFF ^TrialOnToTDT;  ADD A,E; SET z(7)=z(7)+z(6);          \ Beta event detected. Give reward
+       IF z(24) > 0 [@Delay, @NoDelay]
+           @Delay: ---> S4
+           @NoDelay: ON ^Pump, ^PumpToTDT; ---> S5
+#Z2 :  ADD z(10); OFF ^TrialOnToTDT; ON ^TimeoutToTDT;
+       SET P = z(22)*10; ~SetDur(MG, BOX, P);~; ~ONFreq(MG, BOX, 0);~; ---> S7                  \ Artifact or wrong band event detected.
+                                                                                                \ Punishment = white noise, with safety switch
+s4, \delay between event and reward
+z(24)#T: ON ^Pump, ^PumpToTDT; ---> S5
+
+s5, \pump activation time
+z(6)#T: OFF ^Pump, ^PumpToTDT; ON ^DrinkingTimeToTDT ---> S6
+
+s6, \drinking time
+z(23)#T: OFF ^DrinkingTimeToTDT ---> S2
+
+s7, \next trial will begin after artifact is over + time out
+#Z3:  OFF ^TimeoutToTDT; ---> S2
+
+\*********************************************
+\            BETA EVENT DETECTION
+\*********************************************
+S.S.3,
+S1,
+#Z4: set z(1) = 0 ---> S2
+
+S2,
+#R^HoldLever: ADD Z(1); IF Z(1) >= z(11) [@NoLeverRelease, @LeverRelease]
+      @NoLeverRelease: Z1; SET Z(1) = 0 ---> S3
+      @LeverRelease: ---> SX
+z(11)#T: SET Z(1) = 0 ---> S2
+#Z2: ---> S1 \if artifact was detected, wait for the next trial
+
+S3,
+      z(11)#T: ---> S1
+      #R^HoldLever: ---> S3
+
+\*********************************************
+\            ARTIFACT DETECTION
+\*********************************************
+S.S.4,
+S1,
+#Z4: set z(2) = 0 ---> S2
+
+S2,
+#R^WrongHold: ADD Z(2); IF Z(2) >= z(11) [@NoLeverRelease, @LeverRelease]
+      @NoLeverRelease: Z2; SET Z(2) = 0 ---> S3
+      @LeverRelease: ---> SX
+z(11)#T: SET Z(2) = 0 ---> S2
+#Z1: ---> S1 \if beta was detected, wait for the next trial
+
+S3,
+      z(11)#T: ---> S1
+      #R^WrongHold: ---> S3
+
+\*********************************************
+\        END OF ARTIFACT DETECTION
+\*********************************************
+S.S.10,
+S1,
+#Z2: SET z(31) = 0 ---> S2
+
+S2,
+#R^WrongHold: SET z(31) = 0 ---> S2
+0.01": ADD Z(31); IF Z(31) >= Z(22) [@Clean, @NotYet] \ the time out is added as long as there is an artifact
+    @Clean: Z3 ---> S1
+    @NotYet: ---> SX
+
+\*********************************************
+\  A "CLICKER" FOR CORRECT TRIALS
+\*********************************************
+S.S.28
+S1,
+    #Z1: ON ^EventToTDT; ---> S2
+
+S2,
+    0.01": OFF ^EventToTDT; IF z(24) > 0 [@Delay, @NoDelay]
+    @Delay: ---> S3
+    @NoDelay: --->S4
+
+S3,
+    (z(24)-1)#T: ---> S4
+
+S4,
+    0.001": IF z(29) > 0 [@Clicker, @NoClicker]
+        @Clicker: ON ^ClickerToTDT; SET P = z(29); ~SetDur(MG, BOX, P);~; ~ONFreq(MG, BOX, 7000);~; ---> S5
+        @NoClicker: ---> S1
+
+S5,
+    (P/10)#T: OFF ^ClickerToTDT; --->S1
+\***********************************************
+\          SESSION TIMER
+\***********************************************
+S.S.5,  \ Increment time "T" with resolution 0.01 seconds
+S1,
+  #START: ---> S2
+
+S2,
+ 0.01": ADD T ---> SX
+
+\*********************************************
+\                SESSION CLOCK
+\*********************************************
+
+S.S.6,
+S1,
+  #START: ON ^SessionStartTDT; SHOW 1, Session, T/6000 ---> S2
+
+S2,
+0.01": OFF ^SessionStartTDT ---> S3
+
+S3,
+  1": SHOW 1, Session, T/6000;
+      IF (T/6000 >= S)  [@EndSession, @ContinueTiming]
+         @End:  ---> S4
+         @Cont: ---> SX
+
+S4,
+0.01": ON ^SessionStartTDT ---> S5
+
+S5,
+  2": OFF ^SessionStartTDT ---> STOPABORTFLUSH
+
+\*************************************************
+\ STORE THE TIME OF TRIAL BEGIN IN ARRAY W
+\*************************************************
+
+S.S.7,
+
+S1,
+  #START: SET W(K(2)) = -987.987 ---> S2
+
+S2,
+  #Z4: SET W(K(2)) = T/100; ADD K(2);
+            IF K(2) >= 4000 [@TrueArrayFull, @FalseContinue]
+               @ArrayFull: ---> S1
+               @Cont: SET W(K(2)) = -987.987 ---> SX
+
+\*************************************************
+\ STORE THE TIME OF ARTIFACTS IN ARRAY X
+\*************************************************
+
+S.S.8,
+
+S1,
+  #START: SET X(K(3)) = -987.987 ---> S2
+
+S2,
+  #Z2: SET X(K(3)) = T/100; ADD K(3);
+            IF K(3) >= 4000 [@TrueArrayFull, @FalseContinue]
+               @ArrayFull: ---> S1
+               @Cont: SET X(K(3)) = -987.987 ---> SX
+
+\*************************************************
+\ STORE THE TIME OF REWARDS IN ARRAY Y
+\*************************************************
+
+S.S.9,  \ Stores the time of each trial initiation in array Y
+
+S1,
+  #START: SET Y(K(1)) = -987.987 ---> S2
+
+S2,
+  #Z1: SET Y(K(1)) = T/100; ADD K(1);
+            IF K(1) >= 4000 [@TrueArrayFull, @FalseContinue]
+               @ArrayFull: ---> S1
+               @Cont: SET Y(K(1)) = -987.987 ---> SX
+
+
+
+\********************************************
+\            ON SCREEN DISPLAY
+\********************************************
+S.S.26,
+S1,
+  #START: SHOW 2, RewardSize, Z(6), 3, Rewards, A, 4, Punishments, z(10), 5, TotalWater, z(7) ---> S2
+
+S2,
+  1": SHOW 2, RewardSize, Z(6), 3, Rewards, A, 4, Punishments, z(10), 5, TotalWater, z(7) ---> SX
